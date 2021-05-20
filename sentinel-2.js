@@ -52,13 +52,14 @@ var controlPanel = ui.Panel();
 controlPanel.style().set({
   width: "400px",
   // height: "100px",
-  position: "top-right",
+  position: "bottom-left",
 });
 
 Map.add(panel);
 Map.add(controlPanel);
 
 var enhancedContrast = false;
+var enhancedLocalContrast = false;
 var falseColor = false;
 var sr = false;
 var limitToOnePerMonth = true;
@@ -68,6 +69,47 @@ controlPanel.add(
     "Click on the map to get all cloud-free Sentinel-2 imagery for a 16 km^2 region around the selected point. Click on an individual image to add it to the map."
   )
 );
+
+var startDate = "2015-01-01";
+
+controlPanel.add(
+  ui.Panel(
+    [
+      ui.Label("Search start date"),
+      ui.Textbox({
+        value: startDate,
+        onChange: function (value) {
+          startDate = value;
+        },
+      }),
+    ],
+    ui.Panel.Layout.flow("horizontal")
+  )
+);
+
+var currentDate = new Date();
+var month = (currentDate.getMonth() + 1).toString();
+if (month.length == 1) month = "0" + month;
+var day = (currentDate.getDay() + 1).toString();
+if (day.length == 1) day = "0" + day;
+
+var endDate = currentDate.getFullYear() + "-" + month + "-" + day;
+
+controlPanel.add(
+  ui.Panel(
+    [
+      ui.Label("End date"),
+      ui.Textbox({
+        value: endDate,
+        onChange: function (value) {
+          endDate = value;
+        },
+      }),
+    ],
+    ui.Panel.Layout.flow("horizontal")
+  )
+);
+
 controlPanel.add(
   ui.Checkbox({
     label: "IR False Color",
@@ -86,15 +128,30 @@ controlPanel.add(
     },
   })
 );
+
+var localContrastCheckbox = ui.Checkbox({
+  label: "Enhance contrast locally",
+  value: false,
+  onChange: function (contrast) {
+    enhancedLocalContrast = contrast;
+  },
+});
+
+localContrastCheckbox.setDisabled(true);
+
 controlPanel.add(
   ui.Checkbox({
     label: "Enhance contrast",
     value: false,
     onChange: function (contrast) {
       enhancedContrast = contrast;
+      localContrastCheckbox.setDisabled(!contrast);
     },
   })
 );
+
+controlPanel.add(localContrastCheckbox);
+
 controlPanel.add(
   ui.Checkbox({
     label: "Limit to one image per month (recommended for large timeranges)",
@@ -119,7 +176,7 @@ function addClickedImage(image, date, color) {
     image = fullImage.resample("bicubic");
 
     // Define a Laplacian, or edge-detection kernel.
-    var laplacian = ee.Kernel.laplacian8({ normalize: false, magnitude: 0.12 });
+    var laplacian = ee.Kernel.laplacian8({ normalize: false, magnitude: 0.05 });
 
     // Apply the edge-detection kernel.
     var edgy = image.convolve(laplacian);
@@ -140,6 +197,85 @@ function makeDisplayThumbWithDate(image, panel, buffer, color) {
   return function (d) {
     var date = new Date(parseInt(d));
     panel.add(ui.Label(date.toISOString()));
+
+    var color;
+
+    if (enhancedContrast) {
+      var ir_p1 = image.getNumber("ir_p1");
+      var ir_p99 = image.getNumber("ir_p99");
+      var ir_p50 = image.getNumber("ir_p50");
+      var r_p1 = image.getNumber("r_p1");
+      var r_p99 = image.getNumber("r_p99");
+      var r_p50 = image.getNumber("r_p50");
+      var g_p1 = image.getNumber("g_p1");
+      var g_p99 = image.getNumber("g_p99");
+      var g_p50 = image.getNumber("g_p50");
+      var b_p1 = image.getNumber("b_p1");
+      var b_p99 = image.getNumber("b_p99");
+      var b_p50 = image.getNumber("b_p50");
+
+      var b_gamma = b_p50
+        .subtract(b_p1)
+        .divide(b_p99.subtract(b_p1))
+        .log()
+        .divide(ee.Number(0.5).log())
+        .subtract(ee.Number(1))
+        .divide(ee.Number(3))
+        .add(ee.Number(1));
+
+      var r_gamma = r_p50
+        .subtract(r_p1)
+        .divide(r_p99.subtract(r_p1))
+        .log()
+        .divide(ee.Number(0.5).log())
+        .subtract(ee.Number(1))
+        .divide(ee.Number(3))
+        .add(ee.Number(1));
+
+      var g_gamma = g_p50
+        .subtract(g_p1)
+        .divide(g_p99.subtract(g_p1))
+        .log()
+        .divide(ee.Number(0.5).log())
+        .subtract(ee.Number(1))
+        .divide(ee.Number(3))
+        .add(ee.Number(1));
+
+      var ir_gamma = ir_p50
+        .subtract(ir_p1)
+        .divide(ir_p99.subtract(ir_p1))
+        .log()
+        .divide(ee.Number(0.5).log())
+        .subtract(ee.Number(1))
+        .divide(ee.Number(3))
+        .add(ee.Number(1));
+
+      if (falseColor) {
+        color = ee.Dictionary({
+          bands: ["B8", "B4", "B3"],
+          min: [ir_p1, r_p1, g_p1],
+          max: [ir_p99, r_p99, g_p99],
+          gamma: [ir_gamma, r_gamma, g_gamma],
+        });
+      } else {
+        color = ee.Dictionary({
+          bands: ["B4", "B3", "B2"],
+          min: [r_p1, g_p1, b_p1],
+          max: [r_p99, g_p99, b_p99],
+          gamma: [r_gamma, g_gamma, b_gamma],
+        });
+      }
+    } else {
+      color = sr
+        ? falseColor
+          ? veg_ir_sr
+          : rgb_sr
+        : falseColor
+        ? veg_ir
+        : rgb;
+
+      color = ee.Dictionary(color);
+    }
 
     color.evaluate(function (color) {
       var thumb = ui.Thumbnail({
@@ -165,8 +301,8 @@ function filterOnePerMonth(collection) {
   var month = 1;
   var images = [];
 
-  while (year <= 2020) {
-    while (month <= 12) {
+  while (year <= 2021) {
+    while ((month <= 12 && year != 2021) || month <= 5) {
       var start = year + "-" + ("0" + month).slice(-2) + "-01";
       var end = year + "-" + ("0" + (month + 1)).slice(-2) + "-01";
       if (month == 12) {
@@ -219,8 +355,8 @@ function getImagesAtPoint(coords) {
       .multiply(100);
 
     var percentiles = image.mask(not_clouds).reduceRegion({
-      reducer: ee.Reducer.percentile([1, 50, 99], ["p1", "p50", "p99"]),
-      geometry: image.geometry(),
+      reducer: ee.Reducer.percentile([0.5, 40, 99.5], ["p1", "p50", "p99"]),
+      geometry: enhancedLocalContrast ? buffer : image.geometry(),
       scale: 10,
       maxPixels: 1e9,
     });
@@ -251,7 +387,7 @@ function getImagesAtPoint(coords) {
   var collection = ee
     .ImageCollection(sr ? "COPERNICUS/S2_SR" : "COPERNICUS/S2")
     .filterBounds(point)
-    .filterDate("2015-01-01", "2020-12-30")
+    .filterDate(startDate, endDate)
     // Pre-filter to get less cloudy granules.
     .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 15))
     .map(scale)
@@ -263,83 +399,6 @@ function getImagesAtPoint(coords) {
 
   if (limitToOnePerMonth) {
     collection = filterOnePerMonth(collection);
-  }
-
-  var color = sr
-    ? falseColor
-      ? veg_ir_sr
-      : rgb_sr
-    : falseColor
-    ? veg_ir
-    : rgb;
-
-  if (enhancedContrast) {
-    var ir_p1 = collection.aggregate_mean("ir_p1");
-    var ir_p99 = collection.aggregate_mean("ir_p99");
-    var ir_p50 = collection.aggregate_mean("ir_p50");
-    var r_p1 = collection.aggregate_mean("r_p1");
-    var r_p99 = collection.aggregate_mean("r_p99");
-    var r_p50 = collection.aggregate_mean("r_p50");
-    var g_p1 = collection.aggregate_mean("g_p1");
-    var g_p99 = collection.aggregate_mean("g_p99");
-    var g_p50 = collection.aggregate_mean("g_p50");
-    var b_p1 = collection.aggregate_mean("b_p1");
-    var b_p99 = collection.aggregate_mean("b_p99");
-    var b_p50 = collection.aggregate_mean("b_p50");
-
-    var b_gamma = b_p50
-      .subtract(b_p1)
-      .divide(b_p99.subtract(b_p1))
-      .log()
-      .divide(ee.Number(0.5).log())
-      .subtract(ee.Number(1))
-      .divide(ee.Number(3))
-      .add(ee.Number(1));
-
-    var r_gamma = r_p50
-      .subtract(r_p1)
-      .divide(r_p99.subtract(r_p1))
-      .log()
-      .divide(ee.Number(0.5).log())
-      .subtract(ee.Number(1))
-      .divide(ee.Number(3))
-      .add(ee.Number(1));
-
-    var g_gamma = g_p50
-      .subtract(g_p1)
-      .divide(g_p99.subtract(g_p1))
-      .log()
-      .divide(ee.Number(0.5).log())
-      .subtract(ee.Number(1))
-      .divide(ee.Number(3))
-      .add(ee.Number(1));
-
-    var ir_gamma = ir_p50
-      .subtract(ir_p1)
-      .divide(ir_p99.subtract(ir_p1))
-      .log()
-      .divide(ee.Number(0.5).log())
-      .subtract(ee.Number(1))
-      .divide(ee.Number(3))
-      .add(ee.Number(1));
-
-    if (falseColor) {
-      color = ee.Dictionary({
-        bands: ["B8", "B4", "B3"],
-        min: [ir_p1, r_p1, g_p1],
-        max: [ir_p99, r_p99, g_p99],
-        gamma: [ir_gamma, r_gamma, g_gamma],
-      });
-    } else {
-      color = ee.Dictionary({
-        bands: ["B4", "B3", "B2"],
-        min: [r_p1, g_p1, b_p1],
-        max: [r_p99, g_p99, b_p99],
-        gamma: [r_gamma, g_gamma, b_gamma],
-      });
-    }
-  } else {
-    color = ee.Dictionary(color);
   }
 
   var size = collection.size();
@@ -362,7 +421,7 @@ function getImagesAtPoint(coords) {
 
       var d = image
         .get("system:time_start")
-        .evaluate(makeDisplayThumbWithDate(image, subpanel, buffer, color));
+        .evaluate(makeDisplayThumbWithDate(image, subpanel, buffer));
     }
   });
 }
