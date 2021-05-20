@@ -300,7 +300,7 @@ function filterOnePerMonth(collection) {
   var month = 1;
   var images = [];
 
-  while (year <= int(new Date().getFullYear())) {
+  while (year <= parseInt(new Date().getFullYear())) {
     while (month <= 12) {
       var start = year + "-" + ("0" + month).slice(-2) + "-01";
       var end = year + "-" + ("0" + (month + 1)).slice(-2) + "-01";
