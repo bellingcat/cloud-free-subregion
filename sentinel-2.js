@@ -55,7 +55,6 @@ controlPanel.style().set({
   position: "bottom-left",
 });
 
-Map.add(panel);
 Map.add(controlPanel);
 
 var enhancedContrast = false;
