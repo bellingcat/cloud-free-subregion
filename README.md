@@ -2,7 +2,7 @@
 
 This is a Google Earth Engine application that attempts to find Sentinel-2 images that are cloud-free in a particular subregion. This is especially helpful in equatorial regions where heavy cloud cover means that all images might have high cloud cover. However, some of these images might have clear skies over particular areas of interest. This application helps find those images.
 
-![An example of finding an image without clouds](docs/ex.png)
+![An example of finding an image without clouds](docs/ex.jpg)
 
 It can be accessed directly as a [Google Earth Engine application](https://logan.users.earthengine.app/view/simple-sentinel). Click on the map to search for images around that are. Click on thumbnails that appear in the bottom right to add that image to the Google Earth Engine map
 
